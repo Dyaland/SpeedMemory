@@ -1,0 +1,251 @@
+import tkinter as tk
+from random import shuffle
+import os
+import sqlite3
+import logging
+
+from timer import Timer
+from scores import HighScore, create_memory_save, save_new_score
+
+
+class Tile(tk.Button):
+    """Memory tile with name and image that can be set to be revealed."""
+
+    def __init__(self, master, name, image, backside):
+        """Create the tile object"""
+
+        super().__init__(master, image=backside)
+
+        self.name = name
+        self.frontside = image
+        self.reveal = False
+
+
+class MemoryGame(tk.Frame):
+    """Class for loading the memory game."""
+
+    def __init__(self, master) -> None:
+        super().__init__(master)
+
+        # Game-wide variables
+        self.match_attempts = 0  # Counter for score keeping
+        self.game_tiles = []  # Container for tiles in a game
+        self.clicked_tiles = []  # Container for clicked tiles to compare
+        game_sizes = ["2x2", "4x4", "6x6", "8x8"]
+
+        # Create highscores file.
+        try:
+            create_memory_save()
+        except sqlite3.OperationalError:
+            logging.debug("Save file already exists")
+
+        # Load the back side image for the tiles
+        self.tile_backside = tk.PhotoImage(file="tile_back.png")
+
+        # Load 50 frontside images and save them to a list
+        self.image_bank = []
+
+        for file in os.listdir("memory_tiles"):
+            try:
+                img = tk.PhotoImage(file=f"memory_tiles/{file}")
+                self.image_bank.append(img)
+            except tk.TclError:
+                pass
+
+        # Layout: Menu / Options
+        options_frame = tk.Frame(self)
+        options_frame.pack(pady=5)
+        self.options_label = tk.Label(
+            options_frame, text="Select game board size:")
+        self.options_label.pack(side="top")
+
+        self.size_selected = tk.StringVar(options_frame, game_sizes[0])
+        self.size_options = tk.OptionMenu(options_frame,
+                                          self.size_selected, *game_sizes)
+        self.size_options.pack(side="left", padx=(30, 0), pady=10)
+
+        self.play_button = tk.Button(options_frame, width=10, text="Play!",
+                                     command=self.create_new_game)
+        self.play_button.pack(side="right", pady=10)
+
+        # Layout: Game timer, game board and bottom text
+        self.board_frame = tk.Frame(self, bg="black", bd=3, relief="ridge")
+        self.game_message = tk.Label(self, text="")
+        self.game_message.pack(pady=5)
+        self.timer_frame = tk.Frame(self)
+        self.timer = Timer(self.timer_frame)
+        self.pause_button = tk.Button(self.timer_frame, text=" Pause  ", state="disabled",
+                                      command=self.pause)
+
+        self.pack()
+
+    def create_new_game(self) -> None:
+        """Reset widgets and variables, and generate game tiles,"""
+
+        # Reset widgets and variables
+        self.options_label.pack_forget()
+        self.size_options.pack_forget()
+        self.play_button.config(text="Game Menu")
+        self.play_button.bind("<Button-1>", self.reset_game)
+        self.game_message.config(text="Pick a tile")
+
+        # Prep layout and generate game tiles.
+        self.timer_frame.pack()
+        self.timer.pack(side="left")
+        self.pause_button.pack(side="right")
+        self.board_frame.pack()
+        self._generate_tiles()
+
+    def _generate_tiles(self) -> None:
+        """Purge any previous tilesand create new ones. Finally, place them on in the board_frame"""
+
+        # Remove any previous tiles before starting a new game.
+        if self.game_tiles:
+            for tile in self.game_tiles:
+                tile.grid_forget()
+                tile.destroy()
+            self.game_tiles = []
+
+        shuffle(self.image_bank)  # Shuffle the image bank
+
+        # Creates two buttons for each tile image
+        for i in range(int(self.size_selected.get()[0]) ** 2 // 2):
+            for j in range(2):
+                tile = Tile(self.board_frame,
+                            name=f"tile{i}", image=self.image_bank[i], backside=self.tile_backside)
+                tile.bind("<Button-1>", self.click_tile)
+                self.game_tiles.append(tile)
+
+        # Place the tiles
+        shuffle(self.game_tiles)
+        x, y = 0, 0
+        for tile in self.game_tiles:
+            if y == int(self.size_selected.get()[0]):
+                x += 1
+                y = 0
+            tile.grid(row=x, column=y, padx=2, pady=2)
+            y += 1
+
+    def click_tile(self, _) -> None:
+        """Turn a tile and either check for match or ask for another one"""
+
+        # Show a clicked tile's image.
+        _.widget["image"] = _.widget.frontside
+        _.widget.unbind("<Button-1>")
+        self.clicked_tiles.append(_.widget)
+        self.game_message.config(text="Pick another one")
+
+        # Start the timer (only for the first click of a game.)
+        if self.timer.running is not True:
+            self.pause(self.board_frame)
+            self.pause_button["state"] = "normal"
+
+        # Match check if 2 tiles have been turned
+        if len(self.clicked_tiles) == 2:
+            self._compare_tiles()
+
+        # Hide non-matching tiles when a 3rd tile is turned.
+        elif len(self.clicked_tiles) == 3:
+            for tile in self.clicked_tiles[:2]:
+                tile["image"] = self.tile_backside
+                tile.bind("<Button-1>", self.click_tile)
+            self.clicked_tiles = [self.clicked_tiles[-1]]
+
+    def pause(self, game_over=False):
+        """Stops and starts the timer. Hides/shows game board accordingly."""
+
+        if self.timer.running:
+
+            # If timer stops and the game is won, don"t hide the game board.
+            if not game_over:
+                self.board_frame.pack_forget()
+                self.game_message.config(
+                    text="Game paused. Click to continue.")
+
+            self.timer.stop()
+            self.pause_button.config(text="Continue")
+
+        else:
+            self.board_frame.pack()
+            self.timer.start()
+            self.game_message.config(text="Game is running again.")
+            self.pause_button.config(text=" Pause  ")
+
+    def _compare_tiles(self) -> None:
+        """If two turned tiles are a match, they are set to reveal=True."""
+
+        self.match_attempts += 1
+
+        if self.clicked_tiles[0].name != self.clicked_tiles[1].name:
+            self.game_message.config(text="Not a match")
+            return
+
+        else:
+            for tile in self.clicked_tiles:
+                tile.reveal = True
+            self.game_message.config(text="You got a match!")
+            self.clicked_tiles = []
+            self._check_win()
+
+    def _check_win(self) -> None:
+        """Checks for any non-turned tiles"""
+
+        for tile in self.game_tiles:
+            if tile.reveal is not True:
+                return
+
+        self.game_message.config(
+            text=f"Congratulations! You won after {self.match_attempts} tries.")
+        self.pause(game_over=True)
+        self.pause_button.config(state="disabled", text="Victory")
+
+        # Layout: Submit high-score
+        self.entry_frame = tk.Frame(self)
+        self.entry_frame.pack(pady=5)
+        entry_label = tk.Label(self.entry_frame, text="Name:")
+        entry_label.pack(side="left")
+        self.entry_field = tk.Entry(self.entry_frame, width=8, bg="white")
+        self.entry_field.pack(side="left", padx=5)
+        entry_ok = tk.Button(self.entry_frame, text="Submit Score",
+                             command=self.show_high_score)
+        entry_ok.pack(side="left", padx=5)
+
+    def show_high_score(self) -> None:
+        """Save name and score in highscore db file and displays highscores"""
+
+        # Gather game stats
+        board_size = self.size_selected.get()
+        user = self.entry_field.get()[:8]
+        if len(user) < 3:
+            return
+        score = self.match_attempts
+        game_time = self.timer.display.cget("text")
+
+        # Save new score to sqlite db.
+        new_score = dict(zip(
+            ["Player", "Score", "Time"],
+            [user, score, game_time])
+        )
+
+        try:
+            save_new_score(new_score, board_size)
+        except sqlite3.OperationalError:
+            logging.warning("Save Failed")
+
+        self.board_frame.pack_forget()
+        self.entry_frame.pack_forget()
+        self.timer_frame.pack_forget()
+        self.game_message.pack_forget()
+        # self.game_message.config(text = f"{board_size}   {user}   {score}   {game_time}")
+
+        # Load highscore module and display scores.
+        self.high_scores = HighScore(self, self.size_selected.get())
+        self.high_scores.load_scores(self.size_selected.get())
+        self.high_scores.pack()
+
+    def reset_game(self, *args):
+        """Simply re-creates the MemoryGame class object with the same master"""
+
+        self.pack_forget()
+        MemoryGame(self.master).pack()
+        self.destroy()
