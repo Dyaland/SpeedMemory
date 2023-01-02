@@ -1,5 +1,6 @@
 import tkinter as tk
 import sqlite3
+import logging
 
 
 class HighScore(tk.Frame):
@@ -13,18 +14,15 @@ class HighScore(tk.Frame):
         self.loaded_scores = []
         self.table_selected = table_name
 
-        # Default styles
-        self.hs_font = {"font": ("Monaco", 20)}
-
         # Layout: High-scores
-        top_frame = tk.Frame(self)
-        top_frame.pack()
+        board_size_frame = tk.Frame(self)
+        board_size_frame.pack()
 
-        hs_label = tk.Label(top_frame, text="High-score:")
-        hs_label.pack(side='left')
+        high_score_label = tk.Label(board_size_frame, text="High-score:")
+        high_score_label.pack(side='left')
 
-        self.score_choice = tk.StringVar(top_frame, table_name)
-        score_chooser = tk.OptionMenu(top_frame, self.score_choice,
+        self.score_choice = tk.StringVar(board_size_frame, table_name)
+        score_chooser = tk.OptionMenu(board_size_frame, self.score_choice,
                                       *self.tables, command=self.load_scores)
         score_chooser.pack(side='left', padx=5)
 
@@ -35,7 +33,7 @@ class HighScore(tk.Frame):
         self.sort_choice = tk.StringVar(sort_frame, 'Score')
         sort_chooser = tk.OptionMenu(sort_frame, self.sort_choice,
                                      *['Score', 'Time'],
-                                     command=self.update_scores)
+                                     command=self.display_scores)
         sort_chooser.pack(side='left')
 
         scores_frame = tk.Frame(self)
@@ -51,18 +49,23 @@ class HighScore(tk.Frame):
         """Fetch saved high-scores for selected board size"""
 
         table_name = self.score_choice.get()
-
-        with sqlite3.connect("save_data.db") as connection:
+        try:
+            connection = sqlite3.connect("save_data.db")
             cursor = connection.execute(
                 f"""SELECT * FROM "memory{table_name}" """)
             cursor.execute(
                 f"""SELECT * FROM "memory{table_name}" ORDER BY Score """)
             self.loaded_scores = [[i for i in row]
                                   for row in cursor.fetchall()]
+            self.display_scores(table_name)
+        except Exception as e:
+            logging.debug(e)
+        finally:
+            if connection:
+                cursor.close()
+                connection.close()
 
-        self.update_scores(table_name)
-
-    def update_scores(self, *_) -> None:
+    def display_scores(self, *_) -> None:
         """run the sorter, format data into strings and display in respective Text widget"""
 
         sorted_scores = self.sort_scores()
@@ -93,22 +96,29 @@ class HighScore(tk.Frame):
 
 def save_new_score(new_score, table_name) -> None:
     """Saves a row of new high-score data"""
-
-    with sqlite3.connect("save_data.db") as connection:
+    try:
+        connection = sqlite3.connect("save_data.db")
         cursor = connection.cursor()
-        header_string = ", ".join([keys for keys in new_score])
-        data_row = tuple([new_score[keys] for keys in new_score])
+        headers = tuple(([key for key in new_score]))
+        data_row = tuple([new_score[key] for key in new_score])
         cursor.execute(
-            f"""INSERT INTO "memory{table_name}" ({header_string}) VALUES {data_row}""")
+            f"""INSERT INTO "memory{table_name}" {headers} VALUES {data_row}""")
         connection.commit()
+    except Exception as e:
+        logging.debug(e)
+        raise
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
 
 
 def create_memory_save() -> None:
-    """Create data tables for the memory game high scores"""
+    """Create high score save file if none exists"""
 
     default_high_score = ('hi-score', 999, '59:59:99'),
-
-    with sqlite3.connect("save_data.db") as connection:
+    try:
+        connection = sqlite3.connect("save_data.db")
         cursor = connection.cursor()
 
         cursor.execute(
@@ -130,3 +140,10 @@ def create_memory_save() -> None:
             """CREATE TABLE "memory8x8"(Player TEXT, Score INT, Time TEXT)""")
         cursor.executemany(
             """INSERT INTO "memory8x8" VALUES(?, ?, ?);""", default_high_score)
+    except Exception as e:
+        logging.debug(e)
+        raise
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()

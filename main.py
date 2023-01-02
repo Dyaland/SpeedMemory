@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import font
 
-
 from memory_game import MemoryGame
 
 
@@ -11,9 +10,9 @@ class Main(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
 
-        # Main window settings
+        # Window settings
         self.geometry('800x700+270+120')
-        self.title("Games Collection")
+        self.title("Speed Memory")
         self.resizable(False, False)
 
         # Default font and styles
@@ -22,7 +21,7 @@ class Main(tk.Tk):
         self.option_add("*Font", default_font)
         self.option_add("*HighlightThickness", 0)
 
-        MemoryGame(self)
+        MemoryGame(self).pack()
 
 
 if __name__ == '__main__':
