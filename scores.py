@@ -45,6 +45,8 @@ class HighScore(tk.Frame):
                                     relief='ridge', height=14, width=25)
         self.scores_table.pack(side='bottom')
 
+        self.load_scores(self.table_selected)
+
     def load_scores(self, *_) -> None:
         """Fetch saved high-scores for selected board size"""
 

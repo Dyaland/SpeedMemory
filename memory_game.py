@@ -4,25 +4,13 @@ import os
 import sqlite3
 import logging
 
+from tile import Tile
 from timer import Timer
 from scores import HighScore, create_memory_save, save_new_score
 
 
-class Tile(tk.Button):
-    """Memory tile with name and image that can be set to be revealed."""
-
-    def __init__(self, master, name, image, backside):
-        """Create the tile object"""
-
-        super().__init__(master, image=backside)
-
-        self.name = name
-        self.frontside = image
-        self.reveal = False
-
-
 class MemoryGame(tk.Frame):
-    """Class for loading the memory game."""
+    """Tk frame contianing the game."""
 
     def __init__(self, master) -> None:
         super().__init__(master)
@@ -36,21 +24,19 @@ class MemoryGame(tk.Frame):
         # Create highscores file.
         try:
             create_memory_save()
-        except sqlite3.OperationalError:
-            logging.debug("Save file already exists")
+        except sqlite3.OperationalError as e:
+            print(e)
 
-        # Load the back side image for the tiles
-        self.tile_backside = tk.PhotoImage(file="tile_back.png")
-
-        # Load 50 frontside images and save them to a list
+        # Load the backside of the game tiles
+        self.backside = tk.PhotoImage(file="tile_back.png")
+        # Load 50 unique frontside images and save them to a list
         self.image_bank = []
-
         for file in os.listdir("memory_tiles"):
             try:
                 img = tk.PhotoImage(file=f"memory_tiles/{file}")
                 self.image_bank.append(img)
             except tk.TclError:
-                pass
+                logging.warning(f"image load failed for '{file}'")
 
         # Layout: Menu / Options
         options_frame = tk.Frame(self)
@@ -103,8 +89,8 @@ class MemoryGame(tk.Frame):
         for i in range(int(self.size_selected.get()[0]) ** 2 // 2):
             for j in range(2):
                 tile = Tile(self.board_frame,
-                            name=f"tile{i}", image=self.image_bank[i], backside=self.tile_backside)
-                tile.bind("<Button-1>", self.click_tile)
+                            name=f"tile{i}", frontside=self.image_bank[i], backside=self.backside, click_command=self.click_tile)
+                tile.hide_image()
                 self.game_tiles.append(tile)
         shuffle(self.game_tiles)
 
@@ -117,41 +103,41 @@ class MemoryGame(tk.Frame):
         """Turn a tile and either check for match or ask for another one"""
 
         # Show a clicked tile's image.
-        _.widget["image"] = _.widget.frontside
-        _.widget.unbind("<Button-1>")
+        _.widget.show_image()
         self.clicked_tiles.append(_.widget)
         self.game_message.config(text="Pick another one")
 
         # Start the timer (only for the first click of a game.)
-        if self.timer.running is not True:
+        if not self.timer.running:
             self.pause(self.board_frame)
             self.pause_button["state"] = "normal"
 
-        # Match check if 2 tiles have been turned
+        # Match check when 2 tiles have been turned
         if len(self.clicked_tiles) == 2:
             self.compare_tiles()
 
         # Hide non-matching tiles when a 3rd tile is turned.
         elif len(self.clicked_tiles) == 3:
             for tile in self.clicked_tiles[:2]:
-                tile["image"] = self.tile_backside
-                tile.bind("<Button-1>", self.click_tile)
+                tile.hide_image()
             self.clicked_tiles = [self.clicked_tiles[-1]]
 
     def pause(self, game_over=False):
         """Stops and starts the timer. Hides/shows game board accordingly."""
 
+        # Pause the game timer.
         if self.timer.running:
 
-            # If timer stops and the game is won, don"t hide the game board.
+            self.timer.stop()
+            self.pause_button.config(text="Continue")
+
+            # If the game is not over, hide the game board.
             if not game_over:
                 self.board_frame.pack_forget()
                 self.game_message.config(
                     text="Game paused. Click to continue.")
 
-            self.timer.stop()
-            self.pause_button.config(text="Continue")
-
+        # If the game was paused, unpause it.
         else:
             self.board_frame.pack()
             self.timer.start()
@@ -159,7 +145,7 @@ class MemoryGame(tk.Frame):
             self.pause_button.config(text=" Pause  ")
 
     def compare_tiles(self) -> None:
-        """If two turned tiles are a match, they are set to reveal=True."""
+        """If two turned tiles are a match, they are set to matched=True."""
 
         self.match_attempts += 1
 
@@ -169,18 +155,23 @@ class MemoryGame(tk.Frame):
 
         else:
             for tile in self.clicked_tiles:
-                tile.reveal = True
+                tile.matched = True
             self.game_message.config(text="You got a match!")
             self.clicked_tiles = []
-            self.check_win()
 
-    def check_win(self) -> None:
+            if self.check_win():
+                self.high_score_input()
+
+    def check_win(self) -> bool:
         """Checks for any non-turned tiles"""
 
         for tile in self.game_tiles:
-            if not tile.reveal:
-                return
+            if tile.matched is False:
+                return False
+        return True
 
+    def high_score_input(self):
+        """Asks for player input (name) in order to to save highscore."""
         self.game_message.config(
             text=f"Congratulations! You won after {self.match_attempts} tries.")
         self.pause(game_over=True)
@@ -193,9 +184,9 @@ class MemoryGame(tk.Frame):
         entry_label.pack(side="left")
         self.entry_field = tk.Entry(self.entry_frame, width=8, bg="white")
         self.entry_field.pack(side="left", padx=5)
-        entry_ok = tk.Button(self.entry_frame, text="Submit Score",
-                             command=self.show_high_score)
-        entry_ok.pack(side="left", padx=5)
+        ok_button = tk.Button(self.entry_frame, text="Submit Score",
+                              command=self.show_high_score)
+        ok_button.pack(side="left", padx=5)
 
     def show_high_score(self) -> None:
         """Save name and score in highscore db file and displays highscores"""
@@ -226,7 +217,6 @@ class MemoryGame(tk.Frame):
 
         # Load highscore module and display scores.
         self.high_scores = HighScore(self, self.size_selected.get())
-        self.high_scores.load_scores(self.size_selected.get())
         self.high_scores.pack()
 
     def reset_game(self, *args):
