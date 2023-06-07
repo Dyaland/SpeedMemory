@@ -1,0 +1,5 @@
+__pycache__
+.vscode
+venv
+save_data.db
+debug.log
